@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loop Gain Simulator · Ventilatory Instability with Saturation</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+            background: #eef2f5;
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .sim-card {
+            max-width: 1400px;
+            width: 100%;
+            background: #ffffff;
+            border-radius: 28px;
+            box-shadow: 0 12px 28px rgba(0,0,0,0.1);
+            padding: 1.5rem 2rem 2rem 2rem;
+        }
+        h1 {
+            font-size: 1.7rem;
+            font-weight: 600;
+            margin: 0 0 0.2rem 0;
+            color: #1a465b;
+        }
+        .sub {
+            color: #2c5a6e;
+            border-left: 4px solid #3b8db0;
+            padding-left: 16px;
+            margin: 0.4rem 0 1.2rem 0;
+            font-size: 0.9rem;
+        }
+        .two-columns {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 2rem;
+            margin-top: 0.5rem;
+        }
+        .controls-panel {
+            flex: 1.2;
+            min-width: 260px;
+            background: #f8fbfe;
+            border-radius: 24px;
+            padding: 1.2rem 1.5rem;
+            border: 1px solid #cbdde6;
+        }
+        .graph-panel {
+            flex: 2.8;
+            min-width: 500px;
+        }
+        .slider-group {
+            margin-bottom: 1.8rem;
+        }
+        .slider-group label {
+            display: flex;
+            justify-content: space-between;
+            font-weight: 600;
+            color: #1a465b;
+            margin-bottom: 8px;
+        }
+        input[type="range"] {
+            width: 100%;
+            accent-color: #2c7da0;
+        }
+        .param-value {
+            font-family: monospace;
+            background: #eef3f7;
+            padding: 4px 10px;
+            border-radius: 40px;
+            font-size: 0.85rem;
+        }
+        .loopgain-badge {
+            background: #1e3b48;
+            color: white;
+            border-radius: 40px;
+            padding: 10px 16px;
+            text-align: center;
+            margin: 20px 0 20px 0;
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+        canvas {
+            background: #ffffff;
+            border-radius: 20px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            width: 100%;
+            height: auto;
+            border: 1px solid #cbdbe0;
+        }
+        .footnote {
+            font-size: 0.75rem;
+            text-align: center;
+            margin-top: 1.5rem;
+            color: #4e6e7e;
+        }
+        .saturation-note {
+            background: #fff3e0;
+            border-left: 3px solid #c97e5a;
+            padding: 8px 12px;
+            margin-top: 12px;
+            font-size: 12px;
+            border-radius: 12px;
+        }
+        @media (max-width: 780px) {
+            .sim-card { padding: 1.2rem; }
+            .two-columns { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+<div class="sim-card">
+    <h1>Loop Gain Simulator · Ventilatory Instability</h1>
+    <div class="sub">Static simulation with proper saturation: ventilation clamped to [0, 10] L/min in the feedback loop.</div>
+
+    <div class="two-columns">
+        <div class="controls-panel">
+            <div class="slider-group">
+                <label>Plant Gain (PG) <span id="pgVal" class="param-value">0.80</span></label>
+                <input type="range" id="plantGain" min="0.2" max="2.0" step="0.01" value="0.80">
+                <div style="font-size:12px;">ΔPaCO₂ per ΔVentilation (mmHg per L/min)</div>
+            </div>
+            <div class="slider-group">
+                <label>Controller Gain (CG) <span id="cgVal" class="param-value">1.20</span></label>
+                <input type="range" id="controllerGain" min="0.2" max="2.5" step="0.01" value="1.20">
+                <div style="font-size:12px;">ΔVentilation per ΔPaCO₂ (L/min per mmHg)</div>
+            </div>
+            <div class="slider-group">
+                <label>Loop Delay (circulatory) <span id="delayVal" class="param-value">6.0</span> sec</label>
+                <input type="range" id="loopDelay" min="1.0" max="14.0" step="0.2" value="6.0">
+                <div style="font-size:12px;">Lung → chemoreceptor circulation time</div>
+            </div>
+            <div class="slider-group">
+                <label>Time Window <span id="timeWindowVal" class="param-value">40</span> sec</label>
+                <input type="range" id="timeWindow" min="10" max="240" step="1" value="40">
+                <div style="font-size:12px;">X‑axis duration (shows this many seconds)</div>
+            </div>
+
+            <div class="loopgain-badge">
+                Loop Gain (PG × CG) = <strong id="lgNumber">0.96</strong>
+                <span id="stabilityMsg" style="background:#2c6e4e; margin-left:8px; padding:2px 8px; border-radius:40px;">STABLE</span>
+            </div>
+
+            <div class="saturation-note">
+                <strong>⚠️ Physiological saturation</strong><br>
+                Ventilation is physically limited to [0, 10] L/min:<br>
+                • At V = 0 L/min: PaCO₂ rises at max rate (no washout)<br>
+                • At V = 10 L/min: PaCO₂ falls at max rate (saturated CO₂ clearance)<br>
+                This prevents unrealistic behavior and matches physiology.
+            </div>
+
+            <div style="font-size:13px; background:#e2edf2; border-radius:24px; padding:10px 14px; margin-top: 12px;">
+                <strong>Interpretation</strong><br>
+                The graph shows PaCO₂ (solid) and ventilation (dashed) over the selected time window.<br>
+                A disturbance (drop in PaCO₂) is applied automatically at t=0. If Loop Gain > 1, oscillations grow; if <1, they dampen.
+            </div>
+        </div>
+
+        <div class="graph-panel">
+            <canvas id="plotCanvas" width="700" height="400" style="width:100%; height:auto; aspect-ratio:700/400"></canvas>
+            <div style="display: flex; justify-content: space-between; margin-top: 6px; font-size:12px;">
+                <span>PaCO₂ (mmHg) — solid line &nbsp;|&nbsp; Ventilation (L/min) — dashed line</span>
+                <span>Disturbance at t=0 ▼</span>
+            </div>
+        </div>
+    </div>
+    <div class="footnote">
+        * Model: lung time constant = 3.0 s. Ventilation is saturated at [0,10] L/min within the differential equations. Axes dynamically scale.
+    </div>
+</div>
+
+<script>
+    (function() {
+        // --- model constants ---
+        const BASELINE_VE = 5.0;       // L/min eupneic ventilation
+        const TARGET_PACO2 = 40.0;     // mmHg setpoint
+        const LUNG_TAU = 3.0;          // seconds (time constant for CO₂ exchange)
+        const SIM_STEP = 0.05;          // integration step (seconds)
+        const DEFAULT_SIM_DURATION = 120.0; // seconds
+        const VENT_MIN = 0.0;
+        const VENT_MAX = 10.0;
+
+        // Gains and simulation parameters
+        let plantGain = 0.7;
+        let controllerGain = 0.77;
+        let loopDelay = 12.0;
+        let simDuration = DEFAULT_SIM_DURATION;
+
+        // Data storage
+        let t_vals = [];
+        let paco2_vals = [];
+        let vent_vals = [];
+
+        // UI elements
+        const plantSlider = document.getElementById('plantGain');
+        const cgSlider = document.getElementById('controllerGain');
+        const delaySlider = document.getElementById('loopDelay');
+        const timeWindowSlider = document.getElementById('timeWindow');
+        const pgValSpan = document.getElementById('pgVal');
+        const cgValSpan = document.getElementById('cgVal');
+        const delayValSpan = document.getElementById('delayVal');
+        const timeWindowValSpan = document.getElementById('timeWindowVal');
+        const lgNumberSpan = document.getElementById('lgNumber');
+        const stabilityMsgSpan = document.getElementById('stabilityMsg');
+        const canvas = document.getElementById('plotCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Set canvas size
+        function setCanvasSize() {
+            const container = canvas.parentElement;
+            const width = Math.min(750, container.clientWidth - 20);
+            canvas.width = width;
+            canvas.height = 400;
+        }
+        window.addEventListener('resize', () => setCanvasSize());
+        setCanvasSize();
+
+        // Update displayed gains and loop gain
+        function updateGainDisplay() {
+            pgValSpan.innerText = plantGain.toFixed(2);
+            cgValSpan.innerText = controllerGain.toFixed(2);
+            delayValSpan.innerText = loopDelay.toFixed(1);
+            timeWindowValSpan.innerText = simDuration;
+            const lg = plantGain * controllerGain;
+            lgNumberSpan.innerText = lg.toFixed(3);
+            if (lg > 1.0) {
+                stabilityMsgSpan.innerHTML = 'HIGH LOOP GAIN (UNSTABLE)';
+                stabilityMsgSpan.style.background = '#a13e2d';
+            } else if (lg > 0.95) {
+                stabilityMsgSpan.innerHTML = 'MARGINAL (oscillations likely)';
+                stabilityMsgSpan.style.background = '#b9722c';
+            } else {
+                stabilityMsgSpan.innerHTML = 'STABLE (damped)';
+                stabilityMsgSpan.style.background = '#2c6e4e';
+            }
+        }
+
+        // Hard clamp ventilation to physiological limits [0, 10] L/min
+        // This is applied to the actual ventilation value used in the plant equation
+        function clampVentilation(ve) {
+            if (ve < VENT_MIN) return VENT_MIN;
+            if (ve > VENT_MAX) return VENT_MAX;
+            return ve;
+        }
+
+        // Plant: compute dPaCO₂/dt with saturation handling
+        // The key insight: when ventilation is at min or max, further changes in drive
+        // do NOT affect PaCO₂ rate of change because the physiological limit is reached.
+        // deltaVE is calculated using the clamped ventilation value, not the unclamped one.
+        function computePaCO2Derivative(currentVE) {
+            // currentVE is already clamped to [0, 10]
+            let deltaVE = currentVE - BASELINE_VE;
+            // dPaCO₂/dt = - (plantGain * deltaVE) / tau
+            // Negative sign: increased ventilation lowers PaCO₂
+            let dPaco2 = - (plantGain * deltaVE) / LUNG_TAU;
+            return dPaco2;
+        }
+
+        // Compute the full trajectory with proper saturation
+        // Disturbance applied at t=0 (PaCO₂ drop)
+        function computeTrajectory() {
+            const time = [];
+            const paco2 = [];
+            const vent = [];
+
+            let t = 0;
+            let pa = TARGET_PACO2;
+            let ve = BASELINE_VE;
+
+            // Apply disturbance: step drop in PaCO₂ at t=0
+            pa = Math.max(10.0, pa - 1.4);
+
+            // Delay buffer: store (time, paCO₂) for interpolation
+            let pastSamples = [{time: 0, value: pa}];
+
+            time.push(t);
+            paco2.push(pa);
+            vent.push(ve);
+
+            while (t < simDuration - 1e-6) {
+                let dt = SIM_STEP;
+                if (t + dt > simDuration) dt = simDuration - t;
+
+                // 1) Get delayed PaCO₂ from buffer
+                let delayedPa = TARGET_PACO2;
+                const queryTime = t - loopDelay;
+                if (queryTime > 0 && pastSamples.length > 1) {
+                    let left = null, right = null;
+                    for (let i = pastSamples.length-1; i >= 0; i--) {
+                        if (pastSamples[i].time <= queryTime) {
+                            left = pastSamples[i];
+                            if (i+1 < pastSamples.length) right = pastSamples[i+1];
+                            break;
+                        }
+                    }
+                    if (left && right && queryTime !== left.time) {
+                        const frac = (queryTime - left.time) / (right.time - left.time);
+                        delayedPa = left.value + frac * (right.value - left.value);
+                        delayedPa = Math.min(55, Math.max(28, delayedPa));
+                    } else if (left) {
+                        delayedPa = left.value;
+                    }
+                } else if (queryTime <= 0) {
+                    delayedPa = TARGET_PACO2;
+                }
+
+                // 2) Controller: compute desired ventilation from delayed PaCO₂
+                let desiredVe = BASELINE_VE + controllerGain * (delayedPa - TARGET_PACO2);
+                
+                // 3) CRITICAL: Clamp ventilation to physiological limits [0, 10]
+                // This is the actual ventilation that affects gas exchange
+                let clampedVe = clampVentilation(desiredVe);
+                ve = clampedVe;
+
+                // 4) Plant: compute dPaCO₂/dt using the clamped ventilation
+                let dPa = computePaCO2Derivative(ve);
+                let newPa = pa + dPa * dt;
+                newPa = Math.min(52.0, Math.max(28.0, newPa));
+                pa = newPa;
+
+                t += dt;
+
+                time.push(t);
+                paco2.push(pa);
+                vent.push(ve);
+                pastSamples.push({time: t, value: pa});
+                
+                // Keep buffer manageable
+                while (pastSamples.length > 5000) pastSamples.shift();
+            }
+
+            return {time, paco2, vent};
+        }
+
+        // Draw the computed trajectories with dynamic axes
+        function drawTrajectory(timeArr, paco2Arr, ventArr) {
+            if (!ctx || timeArr.length === 0) return;
+            const w = canvas.width;
+            const h = canvas.height;
+
+            const tMin = 0;
+            const tMax = simDuration;
+
+            // Filter indices within time window
+            const indices = [];
+            for (let i = 0; i < timeArr.length; i++) {
+                if (timeArr[i] >= tMin && timeArr[i] <= tMax) indices.push(i);
+            }
+            if (indices.length === 0) return;
+
+            const visTime = indices.map(i => timeArr[i]);
+            const visPaCO2 = indices.map(i => paco2Arr[i]);
+            const visVent = indices.map(i => ventArr[i]);
+
+            // Dynamic ranges for PaCO₂
+            let paco2Min = Math.min(...visPaCO2);
+            let paco2Max = Math.max(...visPaCO2);
+            const paco2Pad = (paco2Max - paco2Min) * 0.05;
+            if (paco2Pad > 0.1) {
+                paco2Min = Math.max(28, paco2Min - paco2Pad);
+                paco2Max = Math.min(55, paco2Max + paco2Pad);
+            } else {
+                paco2Min = Math.min(paco2Min, 38);
+                paco2Max = Math.max(paco2Max, 42);
+            }
+            paco2Min = Math.max(28, paco2Min);
+            paco2Max = Math.min(55, paco2Max);
+            if (paco2Max - paco2Min < 1) {
+                paco2Min = 38;
+                paco2Max = 42;
+            }
+
+            // Dynamic ranges for ventilation (will show 0-10 if saturation occurs)
+            let ventMin = Math.min(...visVent);
+            let ventMax = Math.max(...visVent);
+            const ventPad = (ventMax - ventMin) * 0.05;
+            if (ventPad > 0.05) {
+                ventMin = Math.max(VENT_MIN, ventMin - ventPad);
+                ventMax = Math.min(VENT_MAX, ventMax + ventPad);
+            } else {
+                ventMin = Math.max(VENT_MIN, ventMin - 0.5);
+                ventMax = Math.min(VENT_MAX, ventMax + 0.5);
+            }
+            if (ventMax - ventMin < 0.5) {
+                ventMin = 3;
+                ventMax = 7;
+            }
+
+            // Mapping functions
+            const mapX = (t) => ((t - tMin) / (tMax - tMin)) * w;
+            const mapY_PaCO2 = (val) => h - ((val - paco2Min) / (paco2Max - paco2Min)) * h;
+            const mapY_Vent = (val) => h - ((val - ventMin) / (ventMax - ventMin)) * h;
+
+            ctx.clearRect(0, 0, w, h);
+            ctx.save();
+
+            // Grid for PaCO₂ (left)
+            ctx.strokeStyle = "#cbdbe6";
+            ctx.lineWidth = 0.6;
+            const paco2Steps = 5;
+            for (let i = 0; i <= paco2Steps; i++) {
+                const val = paco2Min + (i / paco2Steps) * (paco2Max - paco2Min);
+                const y = mapY_PaCO2(val);
+                if (y < 0 || y > h) continue;
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(w, y);
+                ctx.stroke();
+                ctx.fillStyle = "#5c7f8c";
+                ctx.font = "10px 'Segoe UI'";
+                ctx.fillText(val.toFixed(0), 4, y-2);
+            }
+
+            // PaCO₂ line
+            ctx.beginPath();
+            for (let i = 0; i < visTime.length; i++) {
+                const x = mapX(visTime[i]);
+                const y = mapY_PaCO2(visPaCO2[i]);
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.strokeStyle = "#1f6d8a";
+            ctx.lineWidth = 2.5;
+            ctx.stroke();
+
+            // Right axis grid for ventilation
+            ctx.strokeStyle = "#e0c8bc";
+            ctx.lineWidth = 0.5;
+            const ventSteps = 5;
+            for (let i = 0; i <= ventSteps; i++) {
+                const val = ventMin + (i / ventSteps) * (ventMax - ventMin);
+                const y = mapY_Vent(val);
+                if (y < 0 || y > h) continue;
+                ctx.beginPath();
+                ctx.moveTo(w - 20, y);
+                ctx.lineTo(w, y);
+                ctx.stroke();
+                ctx.fillStyle = "#c97e5a";
+                ctx.font = "10px 'Segoe UI'";
+                ctx.fillText(val.toFixed(1), w - 38, y-2);
+            }
+
+            // Ventilation line (dashed)
+            ctx.beginPath();
+            ctx.setLineDash([6, 6]);
+            for (let i = 0; i < visTime.length; i++) {
+                const x = mapX(visTime[i]);
+                const y = mapY_Vent(visVent[i]);
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.strokeStyle = "#c97e5a";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Disturbance marker
+            const xMarker = mapX(0);
+            ctx.beginPath();
+            ctx.moveTo(xMarker, 0);
+            ctx.lineTo(xMarker, h);
+            ctx.strokeStyle = "#cc3f2b";
+            ctx.lineWidth = 1.2;
+            ctx.stroke();
+            ctx.fillStyle = "#cc3f2b";
+            ctx.font = "bold 10px 'Segoe UI'";
+            ctx.fillText("Disturbance", xMarker+3, 18);
+
+            // Legends
+            ctx.fillStyle = "#1f6d8a";
+            ctx.font = "bold 12px 'Segoe UI'";
+            ctx.fillText("PaCO₂ (mmHg)", 12, 28);
+            ctx.fillStyle = "#c97e5a";
+            ctx.fillText("Ventilation (L/min)", w - 100, 28);
+            ctx.fillStyle = "#2d5f6e";
+            ctx.font = "10px monospace";
+            ctx.fillText(`LG = ${(plantGain*controllerGain).toFixed(3)}  Delay = ${loopDelay.toFixed(1)} s`, w-180, 48);
+
+            // Add saturation indicators if ventilation hits limits
+            if (Math.min(...visVent) <= VENT_MIN + 0.1) {
+                ctx.fillStyle = "#c97e5a";
+                ctx.font = "9px 'Segoe UI'";
+                ctx.fillText("⚠️ Ventilation at 0 L/min (apnea)", w-160, 68);
+            }
+            if (Math.max(...visVent) >= VENT_MAX - 0.1) {
+                ctx.fillStyle = "#c97e5a";
+                ctx.font = "9px 'Segoe UI'";
+                ctx.fillText("⚠️ Ventilation at 10 L/min (max)", w-160, 82);
+            }
+
+            ctx.restore();
+        }
+
+        // Update everything
+        function updateSimulation() {
+            plantGain = parseFloat(plantSlider.value);
+            controllerGain = parseFloat(cgSlider.value);
+            loopDelay = parseFloat(delaySlider.value);
+            simDuration = parseFloat(timeWindowSlider.value);
+            updateGainDisplay();
+
+            const result = computeTrajectory();
+            t_vals = result.time;
+            paco2_vals = result.paco2;
+            vent_vals = result.vent;
+
+            drawTrajectory(t_vals, paco2_vals, vent_vals);
+        }
+
+        // Event listeners
+        plantSlider.addEventListener('input', updateSimulation);
+        cgSlider.addEventListener('input', updateSimulation);
+        delaySlider.addEventListener('input', updateSimulation);
+        timeWindowSlider.addEventListener('input', updateSimulation);
+
+        // Initial run
+        updateSimulation();
+    })();
+</script>
+</body>
+</html>
